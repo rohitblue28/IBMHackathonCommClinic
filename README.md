@@ -1,1 +1,6 @@
 # IBMHackathonCommClinic
+
+getFromCloudantByPinCode.txt
+grocery_all_docs.json
+medicine_all_docs.json
+skill-communityclinicdemo.json
