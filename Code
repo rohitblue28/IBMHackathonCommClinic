@@ -1,0 +1,849 @@
+Option Public
+
+Dim s As NotesSession
+Dim db As NotesDatabase
+  
+	Dim otherview As NotesView  
+	Dim othercol As NotesDocumentCollection  
+	Dim doc As NotesDocument    
+	Dim uiv As NotesUIView        
+	Dim view As NotesView
+	Dim view1 As NotesView
+	Dim doc1 As NotesDocument
+	Dim EditorLog As String 
+	Dim editLog As Variant
+	Dim lastCount As Integer
+	Dim lastValue As String, finalLastValue As String
+	Dim authorNameStr As String
+	Dim AuthorName As NotesName
+	Dim j As String
+	Dim FilePathVarMain As Variant
+	Dim FilePathMain As String
+	Dim agntName As NotesAgent
+	Dim ErrorLogFile As ErrorLog
+	Dim logfilepath As String
+
+==========================================================================================================================
+
+'Class for generation of Log file for Error Messages
+Public Class ErrorLog
+     'Class for generation of Log file for Error Messages
+     '/*Members*/
+	Private stream1 As NotesStream
+	Private path1 As String
+	
+       '/*Methods*/            
+	Public Sub New(path1 As String)
+     '************************************
+		Set stream1= s.CreateStream
+		If Not stream1.Open (path1) Then
+			MessageBox "Failed creating a log file...." 
+		End If
+		Call Stream1.Truncate 
+	End Sub
+	
+	Public Sub WriteToLog(Text As String)
+     '********************************************
+		Call stream1.WriteText (Text , EOL_CRLF)
+	End Sub
+	
+	Public Sub Delete
+     '*********************
+		stream1.Close                     
+	End Sub
+End Class
+
+==========================================================================================================================
+
+'Class for generation of Log file for Error Messages
+Public Class XMLStream
+     'Class for generation of Log file for Error Messages
+     '/*Members*/
+	Private stream As NotesStream
+	Private path As String
+	
+       '/*Methods*/            
+	Public Sub New(path As String)
+     '************************************
+		Set stream= s.CreateStream
+		If Not stream.Open (path) Then
+			MessageBox "Failed creating a log file...." 
+		End If
+		Call Stream.Truncate 
+	End Sub
+	
+	Public Sub WriteToXML(Text As String)
+     '********************************************
+		Call stream.WriteText (Text , EOL_CRLF)
+	End Sub
+	
+	Public Sub Delete
+     '*********************
+		stream.Close                     
+	End Sub
+End Class
+
+==========================================================================================================================
+
+Sub Initialize
+	On Error Resume Next
+	On Error GoTo ErrorHandle
+	
+	Dim NotesDate As New NotesDateTime (Now())
+	Dim uiw As New NotesUIWorkspace
+	
+	Set s = New NotesSession
+	Set db= s.currentdatabase 
+	Set agntName = s.CurrentAgent     
+	Set uiv=uiw.CurrentView   
+	currentviewname = uiv.viewname  
+	Set otherview = db.GetView(currentviewname)
+	
+	Set DirDb = New NotesDatabase(db.Server, "names.nsf") 
+	Set view1 = DirDb.GetView ("($Users)" )
+	
+	FilePathVarMain = uiw.SaveFileDialog(True,"Select the location to extract the Main, Response & Response to Response Documents","","","")
+	If (IsEmpty(FilePathVarMain)) Then
+		MsgBox "Please select a path to start the extraction." 
+		Exit Sub
+	End If
+	
+	FilePathMain = FilePathVarMain(0) + "\"
+	logfilepath = FilePathMain+"Export_Log" + "_" + Replace(NotesDate.DateOnly,"/","_")+"_"+Replace(NotesDate.TimeOnly ,":","_")+".txt"
+	Set ErrorLogFile = New ErrorLog(logfilepath)
+	ErrorLogFile.WriteToLog("Lotus Notes Agent Run :" + agntName.Name)
+	ErrorLogFile.WriteToLog("")
+	ErrorLogFile.WriteToLog("***********************************************************************************************************************************************")
+	ErrorLogFile.WriteToLog("Data Export Log Started At " + CStr(Now)+ " for Teamroom DB - " + db.Title)
+	ErrorLogFile.WriteToLog("")
+	'+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 
+	
+	Call ExportTeamroomInfo(FilePathMain, logfilepath)
+	Call ExportEvents(FilePathMain, logfilepath)
+	Call ExportSetupInfo(FilePathMain, logfilepath)
+	
+	If DirExists(FilePathMain + "Main") = "False" Then
+		MkDir FilePathMain + "Main"
+	End If
+	If DirExists(FilePathMain + "Responses")  = "False" Then
+		MkDir FilePathMain + "Responses"
+	End If
+	If DirExists(FilePathMain + "Response2Responses")  = "False" Then
+		MkDir FilePathMain + "Response2Responses"
+	End If  
+	
+	'Check if it is for all documents or only selected  
+	Set othercol = db.Unprocesseddocuments 
+	If othercol.count >0 Then 'if more than one doc selected then confirm   
+		resp = MessageBox("Do you want to export only the " & _  
+		"selected " & othercol.count & " documents?", 36, "Selected only?" )  
+	Else  
+		MessageBox "Exporting selected row."   
+	End If  '6= yes  	
+	
+	For i= 1 To othercol.count 	
+		
+		Set doc=othercol.Getnthdocument(i)
+		
+		If doc.Form(0) = "MainTopic" Then
+			Call ExtractMainThreadAllOthers(doc, FilePathMain + "Main\")
+		ElseIf doc.Form(0) = "Response" Then
+			Call ExtractResponses(doc, FilePathMain + "Responses\")
+		ElseIf doc.Form(0) = "ResponseToResponse" Then
+			Call ExtractR2R(doc, FilePathMain + "Response2Responses\")
+		End If
+		
+	Next 
+	
+	ErrorLogFile.WriteToLog("Data Extraction from Notes Document to MS Word completed at : " + CStr(Now))
+	MsgBox "Export Completed. Please review the log file for any errors and warnings!"
+	
+	Exit Sub
+	
+ErrorHandle:
+	ErrorLogFile.WriteToLog("Error at line of Extract Script: " & Erl & " Error : " & Error)
+	ErrorLogFile.WriteToLog("Error occured for Document : " & CStr(doc.Universalid))
+	Resume Next
+End Sub
+
+==========================================================================================================================
+
+Function ExtractMainThreadAllOthers(doc As NotesDocument, filepath As String) 
+	Dim strPath As String
+	j = CStr(doc.Universalid) 		
+	MkDir FilePath + j 		
+	MkDir filepath + j + "\attachments"
+	strPath= filepath +j+"\"
+	strPathatt = filepath+j+"\attachments\"
+	
+	Set XMLFile = New XMLStream(FilePath + j + "/" + j + ".xml")
+	XMLFile.WriteToXML("<?xml version='1.0' encoding='utf-8' ?>")
+	XMLFile.WriteToXML("<TeamRoom xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance' xmlns:xsd='http://www.w3.org/2001/XMLSchema'>")
+	XMLFile.WriteToXML("<Topic>")
+	XMLFile.WriteToXML("<LNUniqueDocID>" + doc.Universalid + "</LNUniqueDocID>")
+	XMLFile.WriteToXML("<DocumentType><![CDATA[" + URLEncoding(doc.Getitemvalue("DocType")(0)) + "]]></DocumentType>")
+	XMLFile.WriteToXML("<Subject><![CDATA[" + URLEncoding(doc.Getitemvalue("Subject")(0)) + "]]></Subject>")
+	
+	Categoryvalue = doc.Getitemvalue( "Categories" )
+	Categoryvaluefinal = ""
+	For k = 0 To UBound(Categoryvalue)
+		If Categoryvaluefinal = "" Then
+			Categoryvaluefinal = Categoryvalue(k)
+		Else
+			Categoryvaluefinal = Categoryvaluefinal +"," + Categoryvalue(k)
+		End If
+	Next
+	
+	XMLFile.WriteToXML("<Category><![CDATA[" + URLEncoding(Categoryvaluefinal) + "]]></Category>")
+	XMLFile.WriteToXML("<AssociatedEvent><![CDATA[" + URLEncoding(doc.Getitemvalue("Milestones")(0)) + "]]></AssociatedEvent>")
+	
+	Subteamsvalue = doc.GetItemValue( "SubteamInterest" )
+	Subteamsvaluefinal = ""
+	For k = 0 To UBound(Subteamsvalue)
+		If Subteamsvaluefinal = "" Then
+			Subteamsvaluefinal = Subteamsvalue(k)
+		Else
+			Subteamsvaluefinal = Subteamsvaluefinal +"," + Subteamsvalue(k)
+		End If
+	Next
+	
+	XMLFile.WriteToXML("<Subteams><![CDATA[" + URLEncoding(Subteamsvaluefinal) + "]]></Subteams>")
+	XMLFile.WriteToXML("<ReviewByDate>" + doc.Getitemvalue("DueDate")(0) + "</ReviewByDate>")
+	  
+	StatusIdentifier = doc.Getitemvalue("ReviewStatus")(0)
+	If StatusIdentifier = "" Or "0" Then
+		XMLFile.WriteToXML("<Status>" + "Open" + "</Status>")	
+	Else
+		XMLFile.WriteToXML("<Status>" + "Completed" + "</Status>")
+	End If
+	
+	'Names MultiValue - COMMENT IF NOT REQUIRED.
+	ApproverNameList = doc.GetItemValue( "People" )
+	LeadNamesFinal = ""
+	Dim approvername As NotesName
+	For k = 0 To UBound(ApproverNameList)
+		Set approvername = New NotesName(ApproverNameList(k))
+		LeadNamesFinaltemp = approvername.Common
+		Set doc1 = view1.GetDocumentByKey(LeadNamesFinaltemp)
+		If Not (doc1 Is Nothing) Then
+			LeadNamesFinal1=doc1.GetItemValue("PIN")(0)
+		End If
+		If LeadNamesFinal = "" Then
+			LeadNamesFinal=LeadNamesFinal1
+		Else
+			LeadNamesFinal = LeadNamesFinal +"," +LeadNamesFinal1
+		End If  
+	Next
+	
+	XMLFile.WriteToXML("<Reviewers>" + LeadNamesFinal + "</Reviewers>")
+	
+	ppIdentifier = doc.Getitemvalue("Readers")(0)
+	If ppIdentifier <> "" Then
+		XMLFile.WriteToXML("<Identifier>" + "Private" + "</Identifier>")
+	Else
+		XMLFile.WriteToXML("<Identifier>" + "Public" + "</Identifier>")
+	End If 
+	
+	activeIdentifier = doc.Getitemvalue("NeverFile")(0)
+	If activeIdentifier = "1" Then
+		XMLFile.WriteToXML("<Active>" + "Yes" + "</Active>")
+	Else
+		XMLFile.WriteToXML("<Active>" + "No" + "</Active>")
+	End If 
+	
+	XMLFile.WriteToXML("<InactiveDate>" + doc.Getitemvalue("FileByDate")(0) + "</InactiveDate>")
+	'++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+	Set serverStr = New NotesName(db.Server)
+	'set the current server to get the common name of the server To dynamically construct the URL below
+	filepathStr = strreplace("\","/",db.FilePath) + "/" 
+	'set the database file path to dynamically construct the URL below
+	currentViewUIDStr =  uiv.View.Universalid 
+	' set the current view Universal ID To dynamically construct the URL below
+	surl = "http://" + serverStr.Common + ".mmm.com/" + filepathStr + currentViewUIDStr +"/"+ doc.Universalid +"/Body?OpenField"
+	'This URL needs no modification as we are pulling all the details dynamically now.
+	'However, please make sure to place the database on Dev101 server to avaoid security issues and errors.
+	'++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+	
+	XMLFile.WriteToXML("<Body url='" + surl + "'></Body>") 	
+	
+	'++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++			
+	ApproverNameList = doc.GetItemValue( "From" ) 'Document Author
+	LeadNamesFinal = ""
+	authorNameStr = ""
+	For k = 0 To UBound(ApproverNameList)
+		Set AuthorName = New NotesName(ApproverNameList(k))
+		LeadNamesFinaltemp = AuthorName.Common
+		Set doc1 = view1.GetDocumentByKey(LeadNamesFinaltemp)
+		If Not (doc1 Is Nothing) Then
+			LeadNamesFinal1=doc1.GetItemValue("PIN")(0)
+		End If
+		If LeadNamesFinal = "" Then
+			LeadNamesFinal=LeadNamesFinal1
+		Else
+			LeadNamesFinal = LeadNamesFinal +"," +LeadNamesFinal1
+		End If  
+		authorNameStr = LeadNamesFinal
+	Next
+	
+	XMLFile.WriteToXML("<Author>" + authorNameStr + "</Author>")
+	
+	EditorLog = doc.ReviewerLog(0)
+	LeadNamesFinal = ""
+	If Trim(EditorLog) <> "" Then
+		editLog = Split(EditorLog,":")
+		lastCount = UBound(editLog)
+		lastValue = editLog(lastCount)
+		finalLastValue =  Trim(StrLeft(lastValue, "("))
+		Dim EditorName As NotesName
+		Set EditorName = New NotesName(finalLastValue)
+		LeadNamesFinaltemp = EditorName.Common
+		Set doc1 = view1.GetDocumentByKey(LeadNamesFinaltemp)
+		If Not (doc1 Is Nothing) Then
+			LeadNamesFinal=doc1.GetItemValue("PIN")(0)
+		End If 
+	Else
+		LeadNamesFinal = authorNameStr
+	End If
+	
+	XMLFile.WriteToXML("<Editor>" + LeadNamesFinal + "</Editor>")
+	XMLFile.WriteToXML("<Created>" + Str(doc.Created) + "</Created>")
+	XMLFile.WriteToXML("<Modified>" + Str(doc.Lastmodified) + "</Modified>")
+	XMLFile.WriteToXML("</Topic></TeamRoom>")
+	
+	Set body = doc.GetFirstItem("Body")
+	Set rtnav = body.CreateNavigator
+	
+	If rtnav.FindFirstElement(RTELEM_TYPE_FILEATTACHMENT) Then
+		Do
+			spath = fpath + "\" 
+			Set att = rtnav.GetElement()
+			filepath1$ = strPathatt & att.Source
+			Call att.ExtractFile(filepath1$)
+			Print filepath1$ & " extracted"
+		Loop While rtnav.FindNextElement()
+	End If                    
+	
+End Function
+
+==========================================================================================================================
+
+Function ExtractResponses(doc As NotesDocument, filepath As String) 
+	
+	Dim strPath As String
+	j = CStr(doc.Universalid) 		
+	MkDir FilePath + j 		
+	MkDir filepath + j + "\attachments"
+	strPath= filepath +j+"\"
+	strPathatt = filepath+j+"\attachments\"
+	
+	Set XMLFile = New XMLStream(FilePath + j + "/" + j + ".xml")
+	XMLFile.WriteToXML("<?xml version='1.0' encoding='utf-8' ?>")
+	XMLFile.WriteToXML("<TeamRoom xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance' xmlns:xsd='http://www.w3.org/2001/XMLSchema'>")
+	XMLFile.WriteToXML("<Response>")
+	XMLFile.WriteToXML("<LNUniqueDocID>" + doc.Universalid + "</LNUniqueDocID>") 		
+	XMLFile.WriteToXML("<ParentDocID>" + doc.Parentdocumentunid + "</ParentDocID>")
+	XMLFile.WriteToXML("<Subject><![CDATA[" + URLEncoding(doc.Getitemvalue("Subject")(0)) + "]]></Subject>")
+	XMLFile.WriteToXML("<ParentSubject><![CDATA[" + URLEncoding(doc.Getitemvalue("ParentSubject")(0)) + "]]></ParentSubject>")
+	
+	Categoryvalue = doc.Getitemvalue( "Categories" )
+	Categoryvaluefinal = ""
+	For k = 0 To UBound(Categoryvalue)
+		If Categoryvaluefinal = "" Then
+			Categoryvaluefinal = Categoryvalue(k)
+		Else
+			Categoryvaluefinal = Categoryvaluefinal +"," + Categoryvalue(k)
+		End If
+	Next
+	
+	XMLFile.WriteToXML("<Category><![CDATA[" + URLEncoding(Categoryvaluefinal) + "]]></Category>")
+	
+	ResponseFromName = doc.GetItemValue( "From" )
+	ResponseFromNameFinal = ""
+	For k = 0 To UBound(ResponseFromName)
+		Set approvername = New NotesName(ResponseFromName(k))
+		ResponseFromNameFinaltemp = approvername.Common
+		Set doc1 = view1.GetDocumentByKey(ResponseFromNameFinal)
+		If Not (doc1 Is Nothing) Then
+			ResponseFromNameFinal1=doc1.GetItemValue("PIN")(0)
+		End If
+		If ResponseFromNameFinal = "" Then
+			ResponseFromNameFinal=ResponseFromNameFinal1
+		Else
+			ResponseFromNameFinal = ResponseFromNameFinal + "," + ResponseFromNameFinal1
+		End If  
+	Next
+	
+	XMLFile.WriteToXML("<ReceivedFrom>" + ResponseFromNameFinal + "</ReceivedFrom>")
+	XMLFile.WriteToXML("<ReceivedOn>" + doc.Getitemvalue("DateComposed")(0) + "</ReceivedOn>")
+	%REM
+		ppIdentifier = doc.Getitemvalue("Readers")(0)
+	If ppIdentifier <> "" Then
+		XMLFile.WriteToXML("<Identifier>" + "Private" + "</Identifier>")
+	Else
+		XMLFile.WriteToXML("<Identifier>" + "Public" + "</Identifier>")
+	End If
+	%END REM 
+	
+	XMLFile.WriteToXML("<ExpirationDate>" + doc.Getitemvalue("expiredate")(0) + "</ExpirationDate>")
+	
+	Set serverStr = New NotesName(db.Server)
+	'set the current server to get the common name of the server To dynamically construct the URL below
+	filepathStr = strreplace("\","/",db.FilePath) + "/" 
+	'set the database file path to dynamically construct the URL below
+	currentViewUIDStr =  uiv.View.Universalid 
+	' set the current view Universal ID To dynamically construct the URL below
+	surl = "http://" + serverStr.Common + ".mmm.com/" + filepathStr + currentViewUIDStr +"/"+ doc.Universalid +"/Body?OpenField"
+	'This URL needs no modification as we are pulling all the details dynamically now.
+	'However, please make sure to place the database on Dev101 server to avaoid security issues and errors.
+	'++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+	XMLFile.WriteToXML("<Body url='" + surl + "'></Body>")
+	'++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++			
+	ApproverNameList = doc.GetItemValue( "From" ) 'Document Author
+	LeadNamesFinal = ""
+	For k = 0 To UBound(ApproverNameList)
+		Set AuthorName = New NotesName(ApproverNameList(k))
+		LeadNamesFinaltemp = AuthorName.Common
+		Set doc1 = view1.GetDocumentByKey(LeadNamesFinaltemp)
+		If Not (doc1 Is Nothing) Then
+			LeadNamesFinal1=doc1.GetItemValue("PIN")(0)
+		End If
+		If LeadNamesFinal = "" Then
+			LeadNamesFinal=LeadNamesFinal1
+		Else
+			LeadNamesFinal = LeadNamesFinal +"," +LeadNamesFinal1
+		End If  
+		authorNameStr = LeadNamesFinal
+	Next
+	
+	XMLFile.WriteToXML("<Author>" + authorNameStr + "</Author>")
+	
+	EditorLog = doc.ReviewerLog(0)
+	LeadNamesFinal = ""
+	If Trim(EditorLog) <> "" Then
+		editLog = Split(EditorLog,":")
+		lastCount = UBound(editLog)
+		lastValue = editLog(lastCount)
+		finalLastValue =  Trim(StrLeft(lastValue, "("))
+		Dim EditorName As NotesName
+		Set EditorName = New NotesName(finalLastValue)
+		LeadNamesFinaltemp = EditorName.Common
+		Set doc1 = view1.GetDocumentByKey(LeadNamesFinaltemp)
+		If Not (doc1 Is Nothing) Then
+			LeadNamesFinal=doc1.GetItemValue("PIN")(0)
+		End If 
+	Else
+		LeadNamesFinal = authorNameStr
+	End If
+	
+	XMLFile.WriteToXML("<Editor>" + LeadNamesFinal + "</Editor>")
+	XMLFile.WriteToXML("<Created>" + Str(doc.Created) + "</Created>")
+	XMLFile.WriteToXML("<Modified>" + Str(doc.Lastmodified) + "</Modified>")
+	XMLFile.WriteToXML("</Response></TeamRoom>")
+	
+	Set body = doc.GetFirstItem("Body")
+	Set rtnav = body.CreateNavigator
+	
+	If rtnav.FindFirstElement(RTELEM_TYPE_FILEATTACHMENT) Then
+		Do
+			spath = fpath + "\" 
+			Set att = rtnav.GetElement()
+			filepath1$ = strPathatt & att.Source
+			Call att.ExtractFile(filepath1$)
+			Print filepath1$ & " extracted"
+		Loop While rtnav.FindNextElement()
+	End If                    
+	
+End Function
+
+==========================================================================================================================
+
+Function ExtractR2R(doc As NotesDocument, filepath As String) 
+	
+	Dim strPath As String
+	j = CStr(doc.Universalid) 		
+	MkDir FilePath + j 		
+	MkDir filepath + j + "\attachments"
+	strPath= filepath +j+"\"
+	strPathatt = filepath+j+"\attachments\"
+	
+	Set XMLFile = New XMLStream(FilePath + j + "/" + j + ".xml")
+	XMLFile.WriteToXML("<?xml version='1.0' encoding='utf-8' ?>")
+	XMLFile.WriteToXML("<TeamRoom xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance' xmlns:xsd='http://www.w3.org/2001/XMLSchema'>")
+	XMLFile.WriteToXML("<ResponseToResponse>")
+	XMLFile.WriteToXML("<LNUniqueDocID>" + doc.Universalid + "</LNUniqueDocID>") 		
+	XMLFile.WriteToXML("<ParentDocID>" + doc.Parentdocumentunid + "</ParentDocID>")
+	XMLFile.WriteToXML("<Subject><![CDATA[" + URLEncoding(doc.Getitemvalue("Subject")(0)) + "]]></Subject>")
+	XMLFile.WriteToXML("<ParentSubject><![CDATA[" + URLEncoding(doc.Getitemvalue("ParentSubject")(0)) + "]]></ParentSubject>")
+	
+	Categoryvalue = doc.Getitemvalue( "Categories" )
+	Categoryvaluefinal = ""
+	For k = 0 To UBound(Categoryvalue)
+		If Categoryvaluefinal = "" Then
+			Categoryvaluefinal = Categoryvalue(k)
+		Else
+			Categoryvaluefinal = Categoryvaluefinal +"," + Categoryvalue(k)
+		End If
+	Next
+	
+	XMLFile.WriteToXML("<Category><![CDATA[" + URLEncoding(Categoryvaluefinal) + "]]></Category>")
+	
+	ResponseFromName = doc.GetItemValue( "From" )
+	ResponseFromNameFinal = ""
+	For k = 0 To UBound(ResponseFromName)
+		Set approvername = New NotesName(ResponseFromName(k))
+		ResponseFromNameFinaltemp = approvername.Common
+		Set doc1 = view1.GetDocumentByKey(ResponseFromNameFinal)
+		If Not (doc1 Is Nothing) Then
+			ResponseFromNameFinal1=doc1.GetItemValue("PIN")(0)
+		End If
+		If ResponseFromNameFinal = "" Then
+			ResponseFromNameFinal=ResponseFromNameFinal1
+		Else
+			ResponseFromNameFinal = ResponseFromNameFinal + "," + ResponseFromNameFinal1
+		End If  
+	Next
+	
+	XMLFile.WriteToXML("<ReceivedFrom>" + ResponseFromNameFinal + "</ReceivedFrom>")
+	XMLFile.WriteToXML("<ReceivedOn>" + doc.Getitemvalue("DateComposed")(0) + "</ReceivedOn>")
+	
+	%REM
+		ppIdentifier = doc.Getitemvalue("Readers")(0)
+	If ppIdentifier <> "" Then
+		XMLFile.WriteToXML("<Identifier>" + "Private" + "</Identifier>")
+	Else
+		XMLFile.WriteToXML("<Identifier>" + "Public" + "</Identifier>")
+	End If
+	%END REM 
+	
+	XMLFile.WriteToXML("<ExpirationDate>" + doc.Getitemvalue("expiredate")(0) + "</ExpirationDate>")
+	
+	Set serverStr = New NotesName(db.Server)
+	'set the current server to get the common name of the server To dynamically construct the URL below
+	filepathStr = strreplace("\","/",db.FilePath) + "/" 
+	'set the database file path to dynamically construct the URL below
+	currentViewUIDStr =  uiv.View.Universalid 
+	' set the current view Universal ID To dynamically construct the URL below
+	surl = "http://" + serverStr.Common + ".mmm.com/" + filepathStr + currentViewUIDStr +"/"+ doc.Universalid +"/Body?OpenField"
+	'This URL needs no modification as we are pulling all the details dynamically now.
+	'However, please make sure to place the database on Dev101 server to avaoid security issues and errors.
+	'++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+	XMLFile.WriteToXML("<Body url='" + surl + "'></Body>")
+	'++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++			
+	ApproverNameList = doc.GetItemValue( "From" ) 'Document Author
+	LeadNamesFinal = ""
+	For k = 0 To UBound(ApproverNameList)
+		Set AuthorName = New NotesName(ApproverNameList(k))
+		LeadNamesFinaltemp = AuthorName.Common
+		Set doc1 = view1.GetDocumentByKey(LeadNamesFinaltemp)
+		If Not (doc1 Is Nothing) Then
+			LeadNamesFinal1=doc1.GetItemValue("PIN")(0)
+		End If
+		If LeadNamesFinal = "" Then
+			LeadNamesFinal=LeadNamesFinal1
+		Else
+			LeadNamesFinal = LeadNamesFinal +"," +LeadNamesFinal1
+		End If  
+		authorNameStr = LeadNamesFinal
+	Next
+	
+	XMLFile.WriteToXML("<Author>" + authorNameStr + "</Author>")
+	
+	EditorLog = doc.ReviewerLog(0)
+	LeadNamesFinal = ""
+	If Trim(EditorLog) <> "" Then
+		editLog = Split(EditorLog,":")
+		lastCount = UBound(editLog)
+		lastValue = editLog(lastCount)
+		finalLastValue =  Trim(StrLeft(lastValue, "("))
+		Dim EditorName As NotesName
+		Set EditorName = New NotesName(finalLastValue)
+		LeadNamesFinaltemp = EditorName.Common
+		Set doc1 = view1.GetDocumentByKey(LeadNamesFinaltemp)
+		If Not (doc1 Is Nothing) Then
+			LeadNamesFinal=doc1.GetItemValue("PIN")(0)
+		End If 
+	Else
+		LeadNamesFinal = authorNameStr
+	End If
+	
+	XMLFile.WriteToXML("<Editor>" + LeadNamesFinal + "</Editor>")
+	XMLFile.WriteToXML("<Created>" + Str(doc.Created) + "</Created>")
+	XMLFile.WriteToXML("<Modified>" + Str(doc.Lastmodified) + "</Modified>")
+	XMLFile.WriteToXML("</ResponseToResponse></TeamRoom>")
+	
+	Set body = doc.GetFirstItem("Body")
+	Set rtnav = body.CreateNavigator
+	
+	If rtnav.FindFirstElement(RTELEM_TYPE_FILEATTACHMENT) Then
+		Do
+			spath = fpath + "\" 
+			Set att = rtnav.GetElement()
+			filepath1$ = strPathatt & att.Source
+			Call att.ExtractFile(filepath1$)
+			Print filepath1$ & " extracted"
+		Loop While rtnav.FindNextElement()
+	End If 
+	
+End Function
+
+==========================================================================================================================
+
+Function URLEncoding(ByVal phrase$) As String
+ 
+On Error GoTo Errors
+ Dim begin%, found%, oldPhrase$
+ 
+'---- Make sure that we have a phrase to change, and a string to look for:
+ If phrase$="" Then GoTo TheEnd
+ 
+'---- Save the original string 
+oldPhrase= phrase
+
+Dim a As Long
+
+Dim ch As String 
+phrase$=""
+ For a=1 To Len(oldphrase)
+  ch=Mid$(oldphrase,a,1)
+  If Uni(ch)=32 Or Uni(ch)>47 And Uni(ch)<58  Or _ '0-9
+  Uni(ch)>64 And Uni(ch)<91  Or _  'A-Z
+  Uni(ch)>96 And Uni(ch)<123 Then  'a-z
+   phrase$=phrase$ & ch
+  Else
+   phrase$=phrase$ & "&#" & Uni(ch) & ";"    
+  End If
+ Next
+ 
+	URLEncoding = phrase
+ 
+TheEnd:
+Exit Function
+ 
+Errors:
+'---- Returning the original value of phrase
+	URLEncoding = oldPhrase
+ Resume TheEnd
+End Function
+
+==========================================================================================================================
+
+Public Function strreplace(ByVal src As String, ByVal dest As String, ByVal arg As String) As String 
+'===============================================================================  
+' +----------------------------------------------------------------------------+  
+' | Function: strreplace  
+' +----------------------------------------------------------------------------+  
+' | Accepts: src, the value to search for to replace.  
+' |          dest, the value to replace with.  
+' |          arg, the string to search within.  
+' +----------------------------------------------------------------------------+  
+' | Description:  
+' | Replaces all occurances of src with dest in the string arg.  
+' +----------------------------------------------------------------------------+  
+'===============================================================================  
+	
+Dim pos As Integer
+pos = InStr(arg, src) 
+While (pos > 0)  
+	arg = Left(arg, pos - 1) + dest + Mid(arg, pos + Len(src))  
+	pos = InStr(pos + Len(dest), arg, src)  
+Wend  
+strreplace = arg
+
+End Function
+
+==========================================================================================================================
+
+Sub ExportSetupInfo(path As String, logfilepath As String)
+	On Error Resume Next
+	On Error GoTo ErrorHandle
+	
+	Dim otherview As NotesView         
+	Dim agntName As NotesAgent
+	Dim uiw As New NotesUIWorkspace
+	Dim DirDb As NotesDatabase
+	Dim view1 As NotesView
+	Dim doc1 As NotesDocument
+	Dim Missionvaluefinal As String 
+	Dim FilePathVar As Variant
+	Dim FilePath As String	
+	Dim NotesDate As New NotesDateTime (Now())   
+	Set agntName = s.CurrentAgent
+	Set otherview = db.GetView("MissionLookup")
+	Set DirDb = New NotesDatabase(db.Server, "mmmdir.nsf") 
+	Set view1 = DirDb.GetView ("($Users)" )
+	
+	FilePath = path
+	
+	'Set ErrorLogFile = New ErrorLog(FilePath+"Export TeamRoom Setup Info_Log" + "_" + Replace(NotesDate.DateOnly,"/","_")+"_"+Replace(NotesDate.TimeOnly ,":","_")+".txt")
+	'ErrorLogFile.WriteToLog("Lotus Notes Agent Run :" + agntName.Name)
+	'ErrorLogFile.WriteToLog("")
+	'ErrorLogFile.WriteToLog("Data Export Log generated on " + CStr(Now))
+	'ErrorLogFile.WriteToLog("***********************************************************************************************************************************************")
+	'ErrorLogFile.WriteToLog("Data Export Log Started At " + CStr(Now)+ " for Teamroom DB - " + db.Title)
+	'ErrorLogFile.WriteToLog("")
+	'+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+	
+	If otherview Is Nothing Then   
+		ErrorLogFile.WriteToLog("Could not open the view - ExportSetupInfo Module.") 
+		Exit Sub  
+	End If    
+	
+	Set doc=otherview.Getfirstdocument()
+	j = "Master_Data" 
+	k = "Master"	
+	MkDir FilePath + j	
+	MkDir FilePath + j + "/" + k
+	Set XMLFile = New XMLStream(FilePath + j + "/" + k + "/" + j + ".xml")
+	XMLFile.WriteToXML("<?xml version='1.0' encoding='utf-8' ?>")
+	XMLFile.WriteToXML("<TeamRoom xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance' xmlns:xsd='http://www.w3.org/2001/XMLSchema'>")
+	XMLFile.WriteToXML("<Categories>")
+	XMLFile.WriteToXML("<TeamName>" + doc.Getitemvalue("TeamName")(0) + "</TeamName>")
+	
+	Missionvalue = doc.GetItemValue( "Mission" )
+	Missionvaluefinal = ""
+	For k = 0 To UBound(Missionvalue)
+		If Missionvaluefinal = "" Then
+			Missionvaluefinal=Missionvalue(k)
+		Else
+			Missionvaluefinal = Missionvaluefinal +"," +Missionvalue(k)
+		End If
+	Next
+	
+	XMLFile.WriteToXML("<TeamPurpose><![CDATA[" + URLEncoding(Missionvaluefinal) + "]]></TeamPurpose>")
+	
+	Categoriesvalue = doc.GetItemValue( "Categories" )
+	Categoriesvaluefinal = ""
+	For k = 0 To UBound(Categoriesvalue)
+		If Categoriesvaluefinal = "" Then
+			Categoriesvaluefinal=Categoriesvalue(k)
+		Else
+			Categoriesvaluefinal = Categoriesvaluefinal +"," +Categoriesvalue(k)
+		End If
+	Next
+	
+	XMLFile.WriteToXML("<MultipleCategories><![CDATA[" + URLEncoding(Categoriesvaluefinal) + "]]></MultipleCategories>")
+	
+	DocTypevalue = doc.GetItemValue( "DocType" )
+	DocTypevaluefinal = ""
+	For k = 0 To UBound(DocTypevalue)
+		If DocTypevaluefinal = "" Then
+			DocTypevaluefinal=DocTypevalue(k)
+		Else
+			DocTypevaluefinal = DocTypevaluefinal +"," +DocTypevalue(k)
+		End If
+	Next
+	
+	XMLFile.WriteToXML("<DocumentTypes><![CDATA[" + URLEncoding(DocTypevaluefinal) + "]]></DocumentTypes>")		
+	XMLFile.WriteToXML("</Categories></TeamRoom>")
+	
+	ErrorLogFile.WriteToLog("Teamroom Configuration or Master Data export Completed!")
+	
+	Exit Sub
+	
+ErrorHandle:
+	ErrorLogFile.WriteToLog("Error at line of Extract Script: " & Erl & " Error : " & Error)
+	ErrorLogFile.WriteToLog("Error occured for Document : " & CStr(doc.Universalid))
+	Resume Next
+End Sub
+Function DirExists (strPath As String) As String
+	DirExists = (Dir$ (strPath ,16 ) <> "" )
+End Function
+
+==========================================================================================================================
+
+Sub ExportEvents(path As String, logfilepath As String)
+	On Error Resume Next
+	On Error GoTo ErrorHandle
+	
+	Dim NotesDate As New NotesDateTime (Now())	  
+  
+	Set agntName = s.CurrentAgent
+	Set otherview = db.GetView("EventLookup")
+	
+	FilePath = path
+	
+	'Set ErrorLogFile = New ErrorLog(FilePath+"Export Event Master_Log" + "_" + _ 
+	'Replace(NotesDate.DateOnly,"/","_")+"_"+Replace(NotesDate.TimeOnly ,":","_")+".txt")
+	'ErrorLogFile.WriteToLog("Lotus Notes Agent Run :" + agntName.Name)
+	'ErrorLogFile.WriteToLog("")
+	'ErrorLogFile.WriteToLog("Data Export Log generated on " + CStr(Now))
+	'ErrorLogFile.WriteToLog("***********************************************************************************************************************************************")
+	'ErrorLogFile.WriteToLog("Data Export Log Started At " + CStr(Now)+ " for Teamroom DB - " + db.Title)
+	'ErrorLogFile.WriteToLog("")
+	'+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+	
+	If otherview Is Nothing Then  
+		'Print "Could not open the view. """ & "" & """"
+		ErrorLogFile.WriteToLog("Could not open the view - ExportEvents Module.")
+		Exit Sub  
+	End If    
+	
+	Set doc=otherview.Getfirstdocument()
+	
+	If doc Is Nothing Then
+		ErrorLogFile.WriteToLog("There are no events or milestones configured in this Teamroom database.")
+		Exit Sub
+	End If 
+	
+	MkDir FilePath + "Event_Master"
+	
+	While Not doc Is Nothing
+		j = CStr(doc.Universalid)
+		MkDir FilePath + "Event_Master" + "/" + j
+		Set XMLFile = New XMLStream(FilePath + "Event_Master" + "/" + j + "/" + j + ".xml")
+		XMLFile.WriteToXML("<?xml version='1.0' encoding='utf-8' ?>")
+		XMLFile.WriteToXML("<TeamRoom xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance' xmlns:xsd='http://www.w3.org/2001/XMLSchema'>")
+		XMLFile.WriteToXML("<Milestones>")	
+		XMLFile.WriteToXML("<Event>" + doc.Getitemvalue("EventSummary")(0) + "</Event>")
+		XMLFile.WriteToXML("<Date>" + doc.Getitemvalue("EventDate")(0) + "</Date>")
+		'URL Encoded Data
+		XMLFile.WriteToXML("<Details><![CDATA[" + URLEncoding(doc.Getitemvalue("EventDetail")(0)) + "]]></Details>")
+		XMLFile.WriteToXML("<Status>" + doc.Getitemvalue("FileThisStatusDoc")(0) + "</Status>")
+		XMLFile.WriteToXML("</Milestones></TeamRoom>")
+		Set doc = otherview.Getnextdocument(Doc)
+	Wend 
+	
+	ErrorLogFile.WriteToLog("Events or Milestones export Completed!")
+	
+	Exit Sub
+	
+ErrorHandle:
+	ErrorLogFile.WriteToLog("Error at line of Extract Script: " & Erl & " Error : " & Error)
+	ErrorLogFile.WriteToLog("Error occured for one of the events or milestones document : " & CStr(doc.Universalid))
+	Resume Next
+End Sub
+
+==========================================================================================================================
+
+Sub ExportTeamroomInfo(path As String, logfilepath As String)
+	On Error Resume Next
+	On Error GoTo ErrorHandle
+	FilePath = path
+	MkDir FilePath + "Teamroom_Info"
+	j = "Teamroom_Info"
+		MkDir FilePath + "Teamroom_Info" + "/" + j
+		Set XMLFile = New XMLStream(FilePath + "Teamroom_Info" + "/" + j + "/" + j + ".xml")
+		XMLFile.WriteToXML("<?xml version='1.0' encoding='utf-8' ?>")
+		XMLFile.WriteToXML("<TeamRoom xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance' xmlns:xsd='http://www.w3.org/2001/XMLSchema'>")
+		XMLFile.WriteToXML("<Info>")
+		
+		Set serverStr1 = New NotesName(db.Server)
+		filepathStr1 = strreplace("\","/",db.FilePath)
+		URLStr = "http://" + serverStr1.Common + ".mmm.com/"
+		
+		XMLFile.WriteToXML("<TeamName>" + db.Title + "</TeamName>")
+		XMLFile.WriteToXML("<DominoServer url='" + URLStr + "'></DominoServer>")
+		XMLFile.WriteToXML("<TeamRoomDB url='" + filepathStr1 + "'></TeamRoomDB>")
+		XMLFile.WriteToXML("</Info></TeamRoom>")
+	
+	ErrorLogFile.WriteToLog("Teamroom Info export Completed!")
+	
+	Exit Sub
+	
+ErrorHandle:
+	ErrorLogFile.WriteToLog("Error at line of Extract Script: " & Erl & " Error : " & Error)
+	ErrorLogFile.WriteToLog("Error occured for one of the events or milestones document : " & CStr(doc.Universalid))
+	Resume Next
+End Sub
+
+==========================================================================================================================
